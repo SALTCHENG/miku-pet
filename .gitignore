@@ -1,0 +1,31 @@
+# MikuPet — 初音未来桌宠
+
+基于 macOS 原生 AppKit 的桌面宠物（桌宠），以初音未来形象呈现，带呼吸、眨眼、眼神跟随鼠标等微动画。
+
+## 特性
+- **无边框透明窗口**，置顶浮动，可拖拽
+- **呼吸动画**（5s 周期 sin 波，±2px Y + ±0.5px X）
+- **随机眨眼**（2.5–5.5s 间隔，0.12s 闭合）
+- **眼神跟随鼠标**（±6px 偏移，easeOut 缓动）
+- **内存轻量**：RSS ~60MB（Swift/AppKit baseline），图片资产仅 ~150KB
+- 纯系统框架，无第三方依赖
+
+## 构建
+
+```bash
+cd miku-pet
+swiftc -O -parse-as-library main.swift PetView/PetView.swift \
+  -o MikuPet -framework AppKit -framework QuartzCore
+./MikuPet
+```
+
+## 资源
+- `assets/base.png` — 去背景的立绘（516×838 @2x）
+- `assets/eyeL.png` / `assets/eyeR.png` — 眼睛条（带羽化 alpha）
+- `tools/` — 图片处理工具（抠图、坐标标定等）
+
+## 后续计划
+- [ ] 对话问答（走 magpie 免费车道）
+- [ ] 家庭运维速查（NAS 巡航数据）
+- [ ] Mac 系统操作（打开 App、音量、锁屏等）
+- [ ] 生活提醒 + 番茄钟
