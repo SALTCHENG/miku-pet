@@ -26,39 +26,121 @@ final class PetDelegate: NSObject, NSApplicationDelegate {
     private var history: [ChatTurn] = []
     private var busy = false
     private var statusItem: NSStatusItem?
+    private var mover: Mover!
+    private var ticker: Timer?
+    private var lastTick = Date()
+    private var moveLog: [String] = []
+
+    /// 素材目录：bundle 内优先，便于把 app 拷走独立运行
+    static func spriteDir() -> String {
+        if let res = Bundle.main.resourcePath {
+            let inBundle = (res as NSString).appendingPathComponent("anim")
+            if FileManager.default.fileExists(atPath: inBundle) { return inBundle }
+        }
+        return "/Users/zhongjiancheng/magpie-workspace/miku-pet/assets/anim"
+    }
+
+    /// 60fps 心跳：推进运动引擎并把窗口搬到新位置
+    private func startTicker() {
+        lastTick = Date()
+        // 用 selector 形式：block 形式在 Swift 6 里是 @Sendable，碰不到 MainActor 隔离的属性。
+        // forMode 必须是 .common：只挂 .eventTracking 的话平时（.default 模式）根本不触发，桌宠一动不动。
+        let t = Timer(timeInterval: 1.0/60.0, target: self,
+                      selector: #selector(tick), userInfo: nil, repeats: true)
+        RunLoop.main.add(t, forMode: .common)
+        ticker = t
+    }
+
+    @objc private func tick() {
+        let now = Date()
+        let dt = now.timeIntervalSince(lastTick)
+        lastTick = now
+        guard dt > 0, dt < 0.5 else { return }        // 睡眠/卡顿后跳过这一帧，避免瞬移
+
+        let before = mover.phase
+        let o = mover.step(dt: dt)
+        window.setFrameOrigin(o)
+        petView.update(phase: mover.phase, facing: mover.facing)
+
+        if mover.phase == .idle && before == .fall { petView.land() }
+        if mover.phase != before {
+            moveLog.append("\(mover.phase.rawValue)@\(Int(o.x)),\(Int(o.y))")
+        }
+    }
+
+    func moverTestBounds() -> NSRect { mover.currentBounds }
+
+    /// 屏幕变化（分辨率/插拔）时重设活动区域
+    @objc private func screensChanged(_ note: Notification) {
+        guard let screen = window.screen ?? NSScreen.main else { return }
+        mover.rebalance(bounds: screen.visibleFrame)
+        window.setFrameOrigin(mover.origin)
+    }
+
+    private func wireMover() {
+        NotificationCenter.default.addObserver(self, selector: #selector(screensChanged(_:)),
+                                               name: NSApplication.didChangeScreenParametersNotification,
+                                               object: nil)
+    }
 
     // MARK: - 启动
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        let size = NSSize(width: 258, height: 419)
         let screen = NSScreen.main ?? NSScreen.screens.first!
-        let vf = screen.visibleFrame
-        let origin = NSPoint(x: vf.maxX - size.width - 20, y: vf.minY + 20)
-        let frame = NSRect(origin: origin, size: size)
+        let h = PetView.suggestedHeight(screen: screen)
 
-        window = NSWindow(contentRect: frame,
+        // 素材：优先 bundle 内，回落工作区目录
+        let dir = PetDelegate.spriteDir()
+        PetView.debugAssetDir = dir
+        let set = SpriteLoader.load(dir: dir, log: { print($0) })
+        if set.isEmpty {
+            print("[MikuPet] FATAL: 没找到任何素材 PNG（目录 \(dir)）")
+        }
+
+        petView = PetView(height: h)
+        petView.loadSprites(set)
+
+        let size = petView.frame.size
+        let vf = screen.visibleFrame
+        // 出生点：右下角，脚贴地面（地面按内容盒算，不是窗口底边）
+        let start = NSPoint(x: vf.maxX - size.width * set.unionBox.xMax - 20,
+                            y: vf.minY - (1 - set.unionBox.yBottom) * size.height)
+
+        window = NSWindow(contentRect: NSRect(origin: start, size: size),
                           styleMask: .borderless,
                           backing: .buffered,
                           defer: false)
         window.isOpaque = false
         window.backgroundColor = .clear
-        window.hasShadow = true
+        window.hasShadow = false            // 阴影由我们自己在脚底画，系统阴影会在透明图上留方框
         window.level = .floating
         window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
         window.ignoresMouseEvents = false
-        window.isMovableByWindowBackground = true
-        window.acceptsMouseMovedEvents = true
-
-        petView = PetView(frame: NSRect(origin: .zero, size: size))
+        window.isMovableByWindowBackground = false   // 拖拽由 PetView 接管，才能区分「拖」和「扔」
         window.contentView = petView
         window.orderFrontRegardless()
+
+        // 运动引擎
+        mover = Mover(size: size, bounds: vf, origin: start)
+        // 身体贴地贴墙：walk 帧身体横跨画布 8%..85%，climb 帧只有 26%..71%，
+        // 不给引擎这两个盒子的话，爬墙时她会悬在离墙几十 pt 的空中。
+        mover.bodyBox = set.unionBox
+        mover.climbBox = set.box(for: "climb")
+        wireMover()
+
+        petView.onClick = { [weak self] in self?.openPanel() }
+        petView.onDragBegin = { [weak self] in self?.mover.beginDrag() }
+        petView.onDragEnd = { [weak self] _ in
+            guard let self else { return }
+            self.mover.endDrag(at: self.window.frame.origin)
+        }
         petView.startAnimations()
+        startTicker()
 
         TaskTimer.shared.fallback = { [weak self] title, body in
             guard let self else { return }
             self.window.orderFrontRegardless()
             self.petView.showBubble("\(title)：\(body)", seconds: 15)
-            self.petView.cheer()
             NSSound(named: "Glass")?.play()
             self.panel.setStatus("\(title)：\(body)")
         }
@@ -66,14 +148,6 @@ final class PetDelegate: NSObject, NSApplicationDelegate {
         panel = PetPanel()
         panel.onSubmit = { [weak self] text in
             Task { @MainActor in await self?.handle(text) }
-        }
-
-        petView.onClick = { [weak self] in self?.openPanel() }
-
-        // 记录鼠标按下位置，用来区分「点击」和「拖动窗口」
-        NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { event in
-            PetView.noteMouseDown(event.locationInWindow)
-            return event
         }
 
         setupStatusItem()
@@ -98,6 +172,20 @@ final class PetDelegate: NSObject, NSApplicationDelegate {
             let list = asks.split(separator: "|").map(String.init)
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
                 Task { await self.runSelfTest(list) }
+            }
+        }
+        // MIKU_SELFTEST_MOVE=<秒> —— 让运动引擎跑一段时间并打印走过的阶段
+        if let secs = ProcessInfo.processInfo.environment["MIKU_SELFTEST_MOVE"],
+           let n = Int(secs) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                print("[selftest] MOVE-BEGIN bounds=\(self.moverTestBounds())")
+                self.moveLog = []
+                DispatchQueue.main.asyncAfter(deadline: .now() + Double(n)) {
+                    print("[selftest] MOVE-PHASES \(self.moveLog.joined(separator: " "))")
+                    print("[selftest] MOVE-ORIGIN \(self.window.frame.origin)")
+                    print("[selftest] MOVE-DONE")
+                    NSApp.terminate(nil)
+                }
             }
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { self.printDiagnostics(tag: "+1.5s") }
@@ -319,6 +407,33 @@ final class PetDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// 本地识别「提醒我 3 分钟后休息眼睛」这类话，返回 (时间, 内容)。
+    /// 必须带提醒动词才走这条路，否则「帮我看 3 分钟后下载完没」这种会被误建成提醒。
+    static func parseRemind(_ raw: String) -> (date: Date, text: String)? {
+        let verbs = ["提醒我", "提醒", "叫我", "喊我", "通知我", "别忘", "记得提醒", "remind"]
+        guard verbs.contains(where: { raw.lowercased().contains($0) }) else { return nil }
+        // 去掉提醒动词，只留时间+内容
+        var body = raw
+        if let r = body.range(of: "提醒我|提醒|叫我|喊我|通知我|别忘|remind", options: .regularExpression) {
+            body = String(body[r.upperBound...])
+        }
+        body = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        // 「明天/今天/+N分钟」等前缀形式 ReminderParser 已能处理；
+        // 「N 分钟后的 X」这种把内容写在时间前面的，先归一化成「时间 内容」
+        if let p = ReminderParser.parse(body) { return (p.date, p.text) }
+        if let p = ReminderParser.parse(Self.reorder(body)) { return (p.date, p.text) }
+        return nil
+    }
+
+    /// 「3 分钟后的浇水」→「3 分钟后 浇水」，让解析器能认出内容部分
+    static func reorder(_ s: String) -> String {
+        guard let r = s.range(of: "(\\d+\\s*(?:分钟|分|小时|小时后)\\s*(?:的)?)", options: .regularExpression)
+        else { return s }
+        let time = String(s[r]).replacingOccurrences(of: "的", with: " ")
+        let rest = String(s[r.upperBound...]).trimmingCharacters(in: .whitespaces)
+        return rest.isEmpty ? s : time + " " + rest
+    }
+
     private func statusLine() -> String {
         var parts: [String] = []
         if let p = TaskTimer.shared.pomodoroRemainingText() { parts.append("🍅 " + p) }
@@ -332,6 +447,12 @@ final class PetDelegate: NSObject, NSApplicationDelegate {
     private func localCommand(_ text: String) async -> String? {
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let low = t.lowercased()
+
+        // 提醒走本地快路径：模型有时会「口头答应但不发 [[remind:]] 标记」，
+        // 时间解析本来就是确定性的，没必要绕一圈 LLM。
+        if let r = Self.parseRemind(t) {
+            return TaskTimer.shared.addReminder(text: r.text, at: r.date)
+        }
 
         if low.hasPrefix("番茄钟") || low.hasPrefix("专注") || low.contains("pomodoro") {
             // 「番茄钟 45」/「专注 25 分钟」

@@ -13,6 +13,30 @@ tools/ft
 tools/winspec
 tools/timest
 tools/cut*
+tools/bbox
+tools/gcrop
+tools/matte2
+tools/montage
+tools/reanchor
+tools/sheet
+tools/spritebuild
+tools/trim
+tools/vext
+tools/moversim_bin
+tools/moversim/moversim
+tools/rawprobe/rawprobe
+tools/*.png
+
+# 素材中间产物（只 assets/anim 是运行时需要的）
+assets/frames/
+assets/raw/
+assets/sprites/
+assets/uni/
+assets/uni116/
+assets/uni300/
+assets/base.png
+assets/eyeL.png
+assets/eyeR.png
 
 # macOS
 .DS_Store

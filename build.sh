@@ -16,6 +16,7 @@ swiftc -O -parse-as-library \
   main.swift PetView/PetView.swift \
   Core/ChatClient.swift Core/NASStatus.swift Core/Actions.swift \
   Core/TaskTimer.swift Core/ReminderParser.swift Core/SystemPrompt.swift \
+  Core/Mover.swift Core/Sprites.swift \
   UI/PetPanel.swift \
   -o "$BIN" -framework AppKit -framework QuartzCore -framework UserNotifications
 
@@ -23,8 +24,10 @@ cp Info.plist "$APP/Contents/Info.plist"
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
 # 素材打进 bundle（运行时会优先用 bundle 内的，取不到才回落到工作区绝对路径）
-mkdir -p "$APP/Contents/Resources/assets"
-cp assets/*.png "$APP/Contents/Resources/assets/"
+mkdir -p "$APP/Contents/Resources/anim"
+if ls assets/anim/*.png >/dev/null 2>&1; then
+  cp assets/anim/*.png "$APP/Contents/Resources/anim/"
+fi
 
 # ad-hoc 签名：不加的话 macOS 26 上可能被 Gatekeeper 拦
 codesign --force --deep --sign - "$APP" 2>/dev/null || echo "(codesign 失败，继续)"
