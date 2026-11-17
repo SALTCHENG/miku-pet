@@ -16,7 +16,7 @@ swiftc -O -parse-as-library \
   main.swift PetView/PetView.swift \
   Core/ChatClient.swift Core/NASStatus.swift Core/Actions.swift \
   Core/TaskTimer.swift Core/ReminderParser.swift Core/SystemPrompt.swift \
-  Core/Mover.swift Core/Sprites.swift Core/VolumeIntent.swift \
+  Core/Mover.swift Core/Sprites.swift Core/VolumeIntent.swift Core/Costume.swift \
   UI/PetPanel.swift \
   -o "$BIN" -framework AppKit -framework QuartzCore -framework UserNotifications
 
@@ -27,6 +27,14 @@ printf 'APPL????' > "$APP/Contents/PkgInfo"
 mkdir -p "$APP/Contents/Resources/anim"
 if ls assets/anim/*.png >/dev/null 2>&1; then
   cp assets/anim/*.png "$APP/Contents/Resources/anim/"
+fi
+if [ -d assets/costume ]; then
+  mkdir -p "$APP/Contents/Resources/costume"
+  cp assets/costume/*.png "$APP/Contents/Resources/costume/"
+fi
+# 也从构建时的 Resources/costume 拷（程序化生成的配饰）
+if [ -d "$APP/Contents/Resources/costume" ]; then
+  echo "costume dir exists in built app"
 fi
 
 # ad-hoc 签名：不加的话 macOS 26 上可能被 Gatekeeper 拦

@@ -21,6 +21,12 @@ final class PetView: NSView {
     private(set) var displayHeight: CGFloat
     private var facing: CGFloat = 1
     private var currentPhase: Mover.Phase = .idle
+    /// 换装层：配饰（帽子/耳机/蝴蝶结…）叠加在角色上，不受换色 filter 影响
+    private let accessoryLayer = CALayer()
+    /// 色相旋转（弧度）：0 = 原色（青发），实时切换当天造型
+    private var hueShift: Float = 0
+    /// 当前配饰名
+    private var currentAccessory: String? = nil
     private var trackingArea: NSTrackingArea?
     private var nodTimer: Timer?
     private var bubbleHideTimer: Timer?
@@ -62,6 +68,14 @@ final class PetView: NSView {
         charLayer.contentsScale = scale
         charLayer.contentsGravity = .resizeAspect
         root.addSublayer(charLayer)
+
+        // 配饰层：和 charLayer 同级同尺寸，不受换色 filter 影响。
+        // 用和 charLayer 相同的 frame/contentsGravity，这样 385x310 的配饰 PNG
+        // 会和角色帧按同样的方式缩放对齐。
+        accessoryLayer.anchorPoint = CGPoint(x: 0.5, y: 0)
+        accessoryLayer.contentsScale = scale
+        accessoryLayer.contentsGravity = .resizeAspect
+        root.addSublayer(accessoryLayer)
 
         bubbleLayer.fillColor = NSColor.windowBackgroundColor.withAlphaComponent(0.95).cgColor
         bubbleLayer.strokeColor = NSColor.separatorColor.withAlphaComponent(0.85).cgColor
@@ -109,6 +123,8 @@ final class PetView: NSView {
     private var footRatio: CGFloat = 1
 
     private func layoutLayers() {
+        accessoryLayer.bounds = CGRect(x: 0, y: 0, width: bounds.width, height: bounds.height)
+        accessoryLayer.position = CGPoint(x: bounds.width/2, y: 0)
         // 用 bounds+position 而不是 frame：charLayer 上常驻 transform 动画（旋转/缩放），
         // 有非单位 transform 时 frame 的取值是不可靠的（Apple 文档明确说 undefined）。
         // anchorPoint 是 (0.5, 0) = 底边中心，所以 position 设在视图底边中心，
@@ -182,6 +198,8 @@ final class PetView: NSView {
             t = CATransform3DTranslate(t, -(r - 0.5) * 2 * bounds.width, 0, 0)
         }
         charLayer.transform = t
+        accessoryLayer.transform = t
+        accessoryLayer.transform = t
 
         switch phase {
         case .walk:
@@ -283,6 +301,57 @@ final class PetView: NSView {
         n.duration = 0.20; n.autoreverses = true
         n.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
         charLayer.add(n, forKey: "nod")
+    }
+
+    /// 换装：色相旋转 + 叠加配饰。配饰 PNG 和角色帧同画布尺寸（385x310），
+    /// 直接作为 accessoryLayer.contents，用和 charLayer 相同的 bounds/position/
+    /// contentsGravity，保证与角色逐像素对齐。
+    /// 色相用 CIHueAdjust 作用在 charLayer.filters（改层自身像素）。
+    func setCostume(hue: Float, accessory: String?) {
+        hueShift = hue
+        if abs(hue) < 0.001 {
+            charLayer.filters = nil
+        } else if let filter = CIFilter(name: "CIHueAdjust") {
+            filter.setDefaults()
+            filter.setValue(hue, forKey: kCIInputAngleKey)
+            charLayer.filters = [filter]
+        } else {
+            charLayer.filters = nil
+        }
+        accessoryLayer.sublayers?.forEach { $0.removeFromSuperlayer() }
+        currentAccessory = accessory
+        guard let acc = accessory, let img = accessoryImage(acc) else {
+            accessoryLayer.contents = nil
+            return
+        }
+        // 配饰 PNG 和角色帧同画布尺寸（385x310），直接贴到 accessoryLayer 上。
+        // bounds/position 已在 layoutLayers() 设好，contentsGravity = resizeAspect。
+        // 但 setCostume 可能先于 layoutLayers 被调用（loadSprites 时），所以这里也设一遍。
+        accessoryLayer.bounds = CGRect(x: 0, y: 0, width: bounds.width, height: bounds.height)
+        accessoryLayer.position = CGPoint(x: bounds.width / 2, y: 0)
+        accessoryLayer.contents = img
+        accessoryLayer.contentsScale = scale
+        accessoryLayer.contentsGravity = .resizeAspect
+    }
+
+    /// 配饰图片：优先 bundle 的 Resources/costume/，其次 Resources 根目录。
+    private func accessoryImage(_ name: String) -> CGImage? {
+        let bundle = Bundle.main
+        var candidates: [String] = []
+        for ext in ["png", "jpg"] {
+            if let p = bundle.path(forResource: name, ofType: ext, inDirectory: "costume") { candidates.append(p) }
+            if let p = bundle.path(forResource: name, ofType: ext) { candidates.append(p) }
+        }
+        // 开发/裸二进制运行时 bundle 可能不含资源，回退到工作区路径
+        let dev = "/Users/zhongjiancheng/magpie-workspace/miku-pet/assets/costume"
+        candidates.append((dev as NSString).appendingPathComponent(name + ".png"))
+        for path in candidates {
+            if let img = NSImage(contentsOfFile: path),
+               let cg = img.cgImage(forProposedRect: nil, context: nil, hints: nil) {
+                return cg
+            }
+        }
+        return nil
     }
 
     /// 落地小反弹

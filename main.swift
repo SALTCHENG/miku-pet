@@ -565,6 +565,16 @@ final class PetDelegate: NSObject, NSApplicationDelegate {
             || low == "ls" || low == "列出当前目录" || low == "列出文件" {
             return MacActions.runShell("ls -la")
         }
+        // 换装：用户说「换成金发」「戴个帽子」就直接换
+        if low.contains("换装") || low.contains("换发型") || low.contains("换衣服")
+            || low.contains("戴帽子") || low.contains("戴耳机") || low.contains("戴蝴蝶结")
+            || low.contains("今天造型") || low.contains("换个造型") {
+            if let c = Costume.find(t) {
+                petView.setCostume(hue: c.hue, accessory: c.accessory)
+                return "已经换成「" + c.name + "」啦～"
+            }
+            return "今天的造型是「" + Costume.today().name + "」，想换的话说「换成金发」或「戴个帽子」"
+        }
         return nil
     }
 
