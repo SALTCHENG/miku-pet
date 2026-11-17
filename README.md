@@ -76,3 +76,23 @@ MIKU_SELFTEST_ASK='打开 Safari|音量调大|提醒我 3 分钟后喝水' MikuP
   标记只口头答应 —— 提示词已强调（`Core/SystemPrompt.swift` 第 5/6 条），仍非 100%。
   确定性命令（提醒/番茄钟/锁屏/隐藏/退出）已在 `main.swift` 的 `localCommand` 走本地快路径绕开 LLM；
   **音量还没进这条快路径**，所以「音量调大」偶尔会漏标记。
+
+## 常驻与自启（install.sh）
+
+桌宠默认是「谁启动谁负责」的普通进程。从终端或脚本里启动的话，那个会话一结束
+（合盖睡眠、终端关闭、脚本退出）进程就没了，也没人再拉起它 —— 表现就是
+「合盖再打开后她不见了」。
+
+```bash
+bash build.sh          # 先构建
+bash install/install.sh  # 装成 launchd 托管的常驻程序
+```
+
+`install.sh` 会把 app 复制到 `~/Library/Application Support/MikuPet/`，
+注册 `~/Library/LaunchAgents/com.saltcheng.mikupet.plist`（RunAtLoad + KeepAlive）。
+之后崩溃或被 kill 都会自动回来；「退出 MikuPet」菜单会先 bootout 守护任务再退出，
+所以点了不会被立刻复活。
+
+唤醒兜底：`main.swift` 监听 `NSWorkspace.didWakeNotification`，
+睡眠后显示配置变了（分辨率/插拔/合盖）时检查窗口是否还落在某块屏上，
+不在就捞回主屏出生点 —— 否则会出现「进程活着但看不见」的情况。

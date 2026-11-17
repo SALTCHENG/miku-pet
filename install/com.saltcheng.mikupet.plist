@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.saltcheng.mikupet</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__HOME__/Library/Application Support/MikuPet/MikuPet.app/Contents/MacOS/MikuPet</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <!-- 崩溃/被杀后自动拉回；「退出 MikuPet」菜单会先 bootout 本任务 -->
+  <key>KeepAlive</key>
+  <true/>
+  <key>ProcessType</key>
+  <string>Interactive</string>
+  <key>LimitLoadToSessionType</key>
+  <string>Aqua</string>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+  <key>StandardOutPath</key>
+  <string>__HOME__/Library/Logs/MikuPet.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>__HOME__/Library/Logs/MikuPet.err.log</string>
+</dict>
+</plist>
