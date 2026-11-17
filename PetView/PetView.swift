@@ -86,6 +86,7 @@ final class PetView: NSView {
             return
         }
         bodyBox = set.unionBox
+        footRatio = set.footRatio
         let aspect = CGFloat(first.image.width) / CGFloat(first.image.height)
         let w = max(60, (displayHeight * aspect).rounded())
         // 保持左下角不动地改尺寸（脚不飘）
@@ -104,6 +105,8 @@ final class PetView: NSView {
 
     /// 当前渲染用的内容盒（按朝向镜像），由 loadSprites 灌入
     private var bodyBox: ContentBox = .full
+    /// 实心脚线（从顶部算）：阴影要跟它走，跟发梢无关
+    private var footRatio: CGFloat = 1
 
     private func layoutLayers() {
         // 用 bounds+position 而不是 frame：charLayer 上常驻 transform 动画（旋转/缩放），
@@ -117,7 +120,7 @@ final class PetView: NSView {
         // 那层浮空感就是用户说的「边界感/贴纸感」。
         let b = bodyBox
         let cx = ((b.xMin + b.xMax) / 2) * bounds.width
-        let feetY = (1 - b.yBottom) * bounds.height
+        let feetY = (1 - footRatio) * bounds.height
         let sw = max(18, bounds.width * 0.34 * max(0.5, b.contentWidth))
         let sh = max(4, bounds.height * 0.045)
         shadowLayer.path = CGPath(ellipseIn: CGRect(x: cx - sw/2, y: feetY - sh * 0.35,

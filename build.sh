@@ -16,7 +16,7 @@ swiftc -O -parse-as-library \
   main.swift PetView/PetView.swift \
   Core/ChatClient.swift Core/NASStatus.swift Core/Actions.swift \
   Core/TaskTimer.swift Core/ReminderParser.swift Core/SystemPrompt.swift \
-  Core/Mover.swift Core/Sprites.swift \
+  Core/Mover.swift Core/Sprites.swift Core/VolumeIntent.swift \
   UI/PetPanel.swift \
   -o "$BIN" -framework AppKit -framework QuartzCore -framework UserNotifications
 

@@ -42,6 +42,10 @@ struct SpriteSet {
 
     /// 每个动作族的内容盒（该族所有帧包围盒的并集）
     var familyBox: [String: ContentBox] = [:]
+    /// 实心脚所在的画布比例（从顶部算）。全库统一，所以换动作时不会跳。
+    var footRatio: CGFloat = 1
+    /// 实心头顶
+    var headRatio: CGFloat = 0
     func box(for family: String) -> ContentBox { familyBox[family] ?? .full }
 
     /// 所有动作族内容盒的并集：地面/天花板/行走范围用它，
@@ -86,7 +90,9 @@ enum SpriteLoader {
     /// 内容包围盒：先把图缩到 128px 宽再扫 alpha。
     /// 逐像素 colorAt() 在 385x310 上扫 40 帧要好几秒，缩样后一次画完直接读缓冲区，
     /// 精度 152pt/128 ≈ 1.2pt，对贴边判据完全够用。
-    private static func box(of cg: CGImage) -> ContentBox {
+    /// solid=true 时用 alpha>0.5：只算不透明的身体，用来定脚线/头线。
+    /// 半透明发梢的长度各族差很多，拿发梢定地面会让她爬墙时凭空浮起十几 pt。
+    private static func box(of cg: CGImage, solid: Bool = false) -> ContentBox {
         let W = 128
         let H = max(1, Int((CGFloat(W) * CGFloat(cg.height) / CGFloat(max(1, cg.width))).rounded()))
         let cs = CGColorSpaceCreateDeviceRGB()
@@ -99,10 +105,12 @@ enum SpriteLoader {
         ctx.draw(cg, in: CGRect(x: 0, y: 0, width: W, height: H))
         guard let ptr = ctx.data else { return .full }
         let p = ptr.bindMemory(to: UInt8.self, capacity: W * H * 4)
-        var mnx = W, mxx = -1, mny = H, mxy = -1     // CGContext 是 bottom-left，y 向上
+        // 注意：新建的 CGBitmapContext 里 buffer 第 0 行就是「顶行」（实测与 colorAt 完全一致），
+        // 所以下面 mny=顶、mxy=底，直接当 top-left 用，不要再翻转一次。
+        var mnx = W, mxx = -1, mny = H, mxy = -1
         for y in 0..<H {
             let row = y * W * 4
-            for x in 0..<W where p[row + x * 4 + 3] > 90 {
+            for x in 0..<W where p[row + x * 4 + 3] > (solid ? 128 : 90) {
                 if x < mnx { mnx = x }
                 if x > mxx { mxx = x }
                 if y < mny { mny = y }
@@ -110,10 +118,11 @@ enum SpriteLoader {
             }
         }
         guard mxx >= 0 else { return .full }
+        // y 一律「从画布顶部算」：buffer 第 0 行就是顶行，不需要翻转。
         return ContentBox(xMin: CGFloat(mnx) / CGFloat(W),
                           xMax: CGFloat(mxx + 1) / CGFloat(W),
-                          yTop: CGFloat(H - (mxy + 1)) / CGFloat(H),      // 转成「从顶部算」
-                          yBottom: CGFloat(H - mny) / CGFloat(H))
+                          yTop: CGFloat(mny) / CGFloat(H),
+                          yBottom: CGFloat(mxy + 1) / CGFloat(H))
     }
 
     /// 每个动作最多保留几帧。116 帧全解码常驻约 55MB，对桌宠没必要：
@@ -162,13 +171,19 @@ enum SpriteLoader {
         var skipped: [String] = []
         var raw: [String: [Sprite]] = [:]
         var boxes: [String: ContentBox] = [:]
+        var foot: CGFloat = 0
+        var head: CGFloat = 1
         for (fam, _, path) in found {
             guard let img = NSImage(contentsOfFile: path),
                   let cg = img.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
                 skipped.append((path as NSString).lastPathComponent); continue
             }
-            let b = box(of: cg)
+            let b = box(of: cg, solid: false)
             raw[fam, default: []].append(Sprite(image: cg, box: b))
+            // 实心脚线：全库取最靠下的那一行（所有族本来就对齐在 306/310，差 1~2px）
+            let sb = box(of: cg, solid: true)
+            foot = max(foot, sb.yBottom)
+            head = min(head, sb.yTop)
             if let cur = boxes[fam] {
                 boxes[fam] = ContentBox(xMin: min(cur.xMin, b.xMin), xMax: max(cur.xMax, b.xMax),
                                         yTop: min(cur.yTop, b.yTop), yBottom: max(cur.yBottom, b.yBottom))
@@ -178,6 +193,8 @@ enum SpriteLoader {
             assign(&set, fam, subsample(arr, maxFrames[fam] ?? arr.count))
         }
         set.familyBox = boxes
+        set.footRatio = foot
+        set.headRatio = head
 
         if set.idle.isEmpty { set.idle = set.walk }
         if set.walk.isEmpty { set.walk = set.idle }
@@ -192,6 +209,7 @@ enum SpriteLoader {
             log("[MikuPet] 帧尺寸 \(first.image.width)x\(first.image.height) "
                 + "中心比例 \(String(format: "%.3f", first.centerRatio))")
         }
+        log(String(format: "[MikuPet] 脚线 %.3f 头线 %.3f", foot, head))
         for k in ["idle", "walk", "climb", "fall", "drag"] {
             guard let b = boxes[k] else { continue }
             log(String(format: "[MikuPet] 内容盒 %@ x%.3f..%.3f y%.3f..%.3f", k, b.xMin, b.xMax, b.yTop, b.yBottom))

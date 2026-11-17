@@ -78,9 +78,37 @@ final class PetDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func wireMover() {
-        NotificationCenter.default.addObserver(self, selector: #selector(screensChanged(_:)),
-                                               name: NSApplication.didChangeScreenParametersNotification,
-                                               object: nil)
+        let nc = NotificationCenter.default
+        nc.addObserver(self, selector: #selector(screensChanged(_:)),
+                       name: NSApplication.didChangeScreenParametersNotification, object: nil)
+        // 合盖/睡眠唤醒：显示序列重建后 visibleFrame 可能换了块屏（或外接拔掉），
+        // 窗口留在旧坐标就成了「消失的桌宠」——进程还活着，只是站在不存在的屏幕上。
+        nc.addObserver(self, selector: #selector(systemWoke(_:)),
+                       name: NSWorkspace.didWakeNotification, object: nil)
+    }
+
+    @objc private func systemWoke(_ note: Notification) {
+        // 唤醒时屏幕参数可能还没稳定，推迟半秒再收
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            self?.rescueIfOffscreen()
+        }
+    }
+
+    /// 把宠物从「不存在的屏幕」捞回来
+    private func rescueIfOffscreen() {
+        let f = window.frame
+        let onSomeScreen = NSScreen.screens.contains { $0.frame.intersects(f) }
+        let screen = window.screen ?? NSScreen.main ?? NSScreen.screens.first!
+        mover.rebalance(bounds: screen.visibleFrame)
+        if !onSomeScreen {
+            // 整个窗口都不在任何屏上：直接放回主屏出生点
+            let b = screen.visibleFrame
+            let start = NSPoint(x: b.maxX - window.frame.width * 0.9, y: b.minY)
+            mover.endDrag(at: start)
+            print("[MikuPet] woke: 窗口在离屏位置，已捞回 \(Int(start.x)),\(Int(start.y))")
+        }
+        window.setFrameOrigin(mover.origin)
+        window.orderFrontRegardless()
     }
 
     // MARK: - 启动
@@ -104,7 +132,7 @@ final class PetDelegate: NSObject, NSApplicationDelegate {
         let vf = screen.visibleFrame
         // 出生点：右下角，脚贴地面（地面按内容盒算，不是窗口底边）
         let start = NSPoint(x: vf.maxX - size.width * set.unionBox.xMax - 20,
-                            y: vf.minY - (1 - set.unionBox.yBottom) * size.height)
+                            y: vf.minY - (1 - set.footRatio) * size.height)
 
         window = NSWindow(contentRect: NSRect(origin: start, size: size),
                           styleMask: .borderless,
@@ -126,6 +154,8 @@ final class PetDelegate: NSObject, NSApplicationDelegate {
         // 不给引擎这两个盒子的话，爬墙时她会悬在离墙几十 pt 的空中。
         mover.bodyBox = set.unionBox
         mover.climbBox = set.box(for: "climb")
+        mover.footRatio = set.footRatio
+        mover.headRatio = set.headRatio
         wireMover()
 
         petView.onClick = { [weak self] in self?.openPanel() }
@@ -283,6 +313,14 @@ final class PetDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func menuQuit() {
+        // 桌宠现在由 launchd(com.saltcheng.mikupet) 托管且 KeepAlive=true，
+        // 直接 terminate 会被秒级复活，「退出」看起来像没反应。
+        // 先 bootout 掉守护任务，再退出自己。
+        let task = Process()
+        task.launchPath = "/bin/launchctl"
+        task.arguments = ["bootout", "gui/\(getuid())/com.saltcheng.mikupet"]
+        try? task.run()
+        task.waitUntilExit()
         NSApp.terminate(nil)
     }
 
@@ -412,16 +450,22 @@ final class PetDelegate: NSObject, NSApplicationDelegate {
     static func parseRemind(_ raw: String) -> (date: Date, text: String)? {
         let verbs = ["提醒我", "提醒", "叫我", "喊我", "通知我", "别忘", "记得提醒", "remind"]
         guard verbs.contains(where: { raw.lowercased().contains($0) }) else { return nil }
-        // 去掉提醒动词，只留时间+内容
+        // 去掉提醒动词，只留时间+内容。
+        // 坑：「3 分钟后提醒我…」把动词放在时间后面，只取 r.upperBound 会把时间一起丢掉。
+        // 所以动词前面的部分也要保留，拼到后面去。
         var body = raw
-        if let r = body.range(of: "提醒我|提醒|叫我|喊我|通知我|别忘|remind", options: .regularExpression) {
+        let verbRE = "提醒我|记得提醒|提醒|叫我|喊我|通知我|别忘|remind"
+        var prefix = ""
+        if let r = body.range(of: verbRE, options: .regularExpression) {
+            prefix = String(body[..<r.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
             body = String(body[r.upperBound...])
         }
         body = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        let after = prefix.isEmpty ? body : prefix + " " + body
         // 「明天/今天/+N分钟」等前缀形式 ReminderParser 已能处理；
         // 「N 分钟后的 X」这种把内容写在时间前面的，先归一化成「时间 内容」
-        if let p = ReminderParser.parse(body) { return (p.date, p.text) }
-        if let p = ReminderParser.parse(Self.reorder(body)) { return (p.date, p.text) }
+        if let p = ReminderParser.parse(after) { return (p.date, p.text) }
+        if let p = ReminderParser.parse(Self.reorder(after)) { return (p.date, p.text) }
         return nil
     }
 
@@ -462,6 +506,13 @@ final class PetDelegate: NSObject, NSApplicationDelegate {
         }
         if low.contains("结束番茄") || low.contains("取消番茄") || low.contains("停止番茄") {
             return TaskTimer.shared.stopPomodoro()
+        }
+        // 音量：模型经常只回「再大声一点咯～」却不发 [[volume:up]]，
+        // 而这件事是纯确定性的，直接本地判定就根治了。
+        // 必须放在 parseRemind 之后 ——「3 分钟后把音量调小」首先是一条提醒。
+        if let v = VolumeIntent.parse(low) {
+            if v.isEmpty { return "想调大还是调小？说「音量调大」这样就行～" }
+            return MacActions.setVolume(v)
         }
         if low == "锁屏" || low == "锁定屏幕" || low.contains("锁屏") {
             return MacActions.lockScreen()

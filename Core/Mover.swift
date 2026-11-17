@@ -47,6 +47,9 @@ final class Mover {
     /// `climbBox` 只用于贴墙（爬墙帧身体窄很多，用并集的话她会悬在离墙 40pt 处）。
     var bodyBox: ContentBox = .full
     var climbBox: ContentBox = .full
+    /// 实心脚/头在画布里的位置（从顶部算）。地面和天花板用它，不用内容盒的下边界。
+    var footRatio: CGFloat = 1
+    var headRatio: CGFloat = 0
 
     /// 窗口尺寸（pt）
     private let size: NSSize
@@ -103,8 +106,8 @@ final class Mover {
     }
 
     // 地面/天花板按内容盒收：脚底留白不算进身高，头顶留白不算进天花板
-    private var floorY: CGFloat { bounds.minY - (1 - bodyBox.yBottom) * size.height }
-    private var ceilY: CGFloat { bounds.maxY - size.height + bodyBox.yTop * size.height }
+    private var floorY: CGFloat { bounds.minY - (1 - footRatio) * size.height }
+    private var ceilY: CGFloat { bounds.maxY - size.height + headRatio * size.height }
     private var minX: CGFloat { pinnedX(edge: .left, box: bodyBox) }
     private var maxX: CGFloat { pinnedX(edge: .right, box: bodyBox) }
 
