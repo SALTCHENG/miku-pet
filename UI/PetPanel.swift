@@ -40,6 +40,12 @@ final class PetPanel: NSWindow {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
 
+    override func resignKey() {
+        super.resignKey()
+        // 点别处（桌宠、桌面、别的窗口）→ 自动收起对话框
+        orderOut(nil)
+    }
+
     // MARK: - 构建
 
     private func buildLog() {
@@ -82,15 +88,47 @@ final class PetPanel: NSWindow {
         inputField.action = #selector(submit)
         contentView?.addSubview(inputField)
 
-        sendButton.frame = NSRect(x: PetPanel.panelSize.width - 76, y: 12, width: 62, height: 26)
+        sendButton.frame = NSRect(x: PetPanel.panelSize.width - 100, y: 12, width: 62, height: 26)
         sendButton.autoresizingMask = [.minXMargin]
         sendButton.bezelStyle = .rounded
         sendButton.target = self
+
+        // 关闭按钮：无边框窗口系统不会自动给关闭键，用户点完对话框发现关不掉，
+        // 只能拖到别处去 —— 这就是「右上角没有关闭按钮」的根因。
+        // 用圆角小方块 + ✕，和「发送」同款样式，放在右上角。
+        let close = NSButton(title: "✕", target: self, action: #selector(closePanel))
+        close.frame = NSRect(x: PetPanel.panelSize.width - 34, y: 12, width: 22, height: 26)
+        close.autoresizingMask = [.minXMargin]
+        close.bezelStyle = .rounded
+        close.font = NSFont.systemFont(ofSize: 11)
+        close.wantsLayer = true
+        close.layer?.backgroundColor = NSColor.systemRed.withAlphaComponent(0.85).cgColor
+        close.layer?.cornerRadius = 11
+        close.attributedTitle = NSAttributedString(string: "✕",
+            attributes: [.foregroundColor: NSColor.white, .font: NSFont.systemFont(ofSize: 11)])
+        close.isBordered = false
+        contentView?.addSubview(close)
+        self.closeButton = close
         sendButton.action = #selector(submit)
         contentView?.addSubview(sendButton)
     }
 
     // MARK: - 交互
+
+    private var closeButton: NSButton?
+
+    /// Esc / ⌘W 关掉面板，比拖到别处去自然得多
+    override func keyDown(with event: NSEvent) {
+        if event.modifierFlags.contains(.command) && event.keyCode == 53 {
+            closePanel(); return
+        }
+        if event.keyCode == 53 { closePanel(); return }
+        super.keyDown(with: event)
+    }
+
+    @objc private func closePanel() {
+        orderOut(nil)
+    }
 
     @objc private func submit() {
         let text = inputField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)

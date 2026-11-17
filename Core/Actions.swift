@@ -104,6 +104,93 @@ enum MacActions {
         return "准备休眠"
     }
 
+    /// 在指定浏览器里打开网址。没指定浏览器就用默认浏览器。
+    /// 为什么需要它：现在的白名单只有 [[open:AppName]]，「在谷歌打开 xx 网站」
+    /// 模型只能空口答应，最终被忽略。有了它，这类请求就能真的落地。
+    static func openURL(_ url: String, browser: String? = nil) -> String {
+        let u = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let urlObj = URL(string: u), urlObj.host != nil else {
+            return "不是有效网址：\(u)"
+        }
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        if let b = browser, !b.isEmpty {
+            // 先按 App 名找，找不到就直接给 open（它也能按名字开）
+            let want = b.hasSuffix(".app") ? b : b + ".app"
+            var found: String? = nil
+            for root in ["/Applications", "/System/Applications", "/Applications/Utilities"] {
+                if let entries = try? FileManager.default.contentsOfDirectory(atPath: root),
+                   let e = entries.first(where: { $0 == want }) {
+                    found = URL(fileURLWithPath: root).appendingPathComponent(e).path
+                    break
+                }
+            }
+            if let path = found {
+                p.arguments = ["-a", path, u]
+            } else {
+                p.arguments = [u]
+            }
+        } else {
+            p.arguments = [u]
+        }
+        try? p.run()
+        return "已在浏览器打开 \(u)"
+    }
+
+    /// 在 Google 搜索关键词（等价于「在谷歌打开 xx 网站」的兜底）
+    static func googleSearch(_ query: String) -> String {
+        let q = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
+        return openURL("https://www.google.com/search?q=\(q)", browser: nil)
+    }
+
+    /// 执行 shell 命令 —— 这是「分身」权限的核心。
+    /// 不是无脑放行：只允许 /bin /usr/bin /sbin /usr/sbin 下的真实二进制，
+    /// 禁止 rm -rf /、sudo、kill、launchctl、chmod、chown、写入系统目录等。
+    static func runShell(_ raw: String) -> String {
+        let cmd = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cmd.isEmpty else { return "空命令" }
+        // 拆出第一个词（命令本身），其余是参数
+        let parts = cmd.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true)
+        guard let first = parts.first else { return "命令格式不对" }
+        let bin = String(first)
+        let allowedBins = ["/bin/ls", "/bin/cat", "/bin/echo", "/bin/mkdir", "/bin/rmdir",
+                           "/bin/cp", "/bin/mv", "/bin/head", "/bin/tail", "/bin/wc",
+                           "/bin/grep", "/bin/find", "/bin/date", "/bin/df", "/bin/du",
+                           "/bin/pwd", "/bin/hostname", "/bin/whoami", "/bin/id",
+                           "/bin/ps", "/usr/bin/open", "/usr/bin/defaults", "/usr/bin/osascript",
+                           "/usr/bin/curl", "/usr/bin/wget", "/usr/bin/python3", "/usr/bin/perl",
+                           "/usr/bin/awk", "/usr/bin/sed", "/usr/bin/git", "/usr/bin/brew",
+                           "/usr/bin/nas-run.sh", "/bin/bash", "/bin/zsh"]
+        guard allowedBins.contains(bin) else {
+            return "只允许执行常用命令（ls/echo/python3/curl/…），\(bin) 不在白名单里"
+        }
+        // 危险参数黑名单
+        let lower = cmd.lowercased()
+        let banned = ["rm -rf /", "rm -rf ~", "sudo ", "kill -9", "killall",
+                      "launchctl", "chmod 777", "chown ", "dd if=", "> /dev/sd",
+                      "mkfs", "fdisk", "mount ", "umount ", "reboot", "shutdown"]
+        for b in banned where lower.contains(b) {
+            return "拒绝执行危险命令：\(b)"
+        }
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/bash")
+        p.arguments = ["-c", cmd]
+        let out = Pipe()
+        let err = Pipe()
+        p.standardOutput = out
+        p.standardError = err
+        do {
+            try p.run()
+            p.waitUntilExit()
+            let data = out.fileHandleForReading.readDataToEndOfFile()
+            let text = String(data: data, encoding: .utf8) ?? ""
+            let short = text.count > 500 ? String(text.prefix(500)) + "…" : text
+            return short.isEmpty ? "（无输出）" : short
+        } catch {
+            return "执行失败：\(error.localizedDescription)"
+        }
+    }
+
     /// 常用 App 的中文名 → 英文名（LLM 可能直接吐中文）
     static func normalizeAppName(_ raw: String) -> String {
         let map: [String: String] = [

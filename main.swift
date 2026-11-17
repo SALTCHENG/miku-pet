@@ -533,7 +533,54 @@ final class PetDelegate: NSObject, NSApplicationDelegate {
         if low == "有哪些提醒" || low == "提醒列表" {
             return TaskTimer.shared.pendingRemindersText()
         }
+        // 打开网站：模型经常不知道 [[openurl:]]，直接本地判定。
+        // 覆盖「在谷歌打开 xx」「用 Chrome 打开 xx」「打开这个网址」等口语。
+        if let (url, browser) = Self.extractURL(t) {
+            return MacActions.openURL(url, browser: browser)
+        }
+        // 在谷歌搜索：模型可能只说「搜一下 xx」而不发 [[search:]]
+        if low.contains("谷歌搜索") || low.contains("搜索一下") || low.contains("搜一下")
+            || low.contains("在谷歌") || low.contains("用谷歌") {
+            let q = t.replacingOccurrences(of: "谷歌搜索", with: "")
+                     .replacingOccurrences(of: "搜索一下", with: "")
+                     .replacingOccurrences(of: "搜一下", with: "")
+                     .replacingOccurrences(of: "在谷歌", with: "")
+                     .replacingOccurrences(of: "用谷歌", with: "")
+                     .trimmingCharacters(in: .whitespacesAndNewlines)
+            return MacActions.googleSearch(q)
+        }
+        // 执行命令：分身权限，用户说「执行 ls」「运行 df -h」就直接跑
+        if low.hasPrefix("执行") || low.hasPrefix("运行") || low.hasPrefix("shell")
+            || low.hasPrefix("命令") || low.hasPrefix("跑一下") {
+            let cmd = t.replacingOccurrences(of: "执行", with: "")
+                     .replacingOccurrences(of: "运行", with: "")
+                     .replacingOccurrences(of: "shell", with: "")
+                     .replacingOccurrences(of: "命令", with: "")
+                     .replacingOccurrences(of: "跑一下", with: "")
+                     .trimmingCharacters(in: .whitespacesAndNewlines)
+            return MacActions.runShell(cmd)
+        }
+        // 列出当前目录：模型可能说「列出当前目录的文件」而不发 [[shell:ls -la]]
+        if low.contains("列出") || low.contains("目录") || low.contains("ls ")
+            || low == "ls" || low == "列出当前目录" || low == "列出文件" {
+            return MacActions.runShell("ls -la")
+        }
         return nil
+    }
+
+    /// 从自然语言里抽出 URL（http/https 开头）和浏览器名
+    private static func extractURL(_ t: String) -> (String, String?)? {
+        guard let re = try? NSRegularExpression(pattern: "https?://[^\\s]+"),
+              let m = re.firstMatch(in: t, range: NSRange(location: 0, length: t.utf16.count)) else {
+            return nil
+        }
+        let url = (t as NSString).substring(with: m.range)
+        var browser: String? = nil
+        let low = t.lowercased()
+        for b in ["Chrome", "Safari", "Edge", "Firefox", "Arc"] {
+            if low.contains(b.lowercased()) { browser = b; break }
+        }
+        return (url, browser)
     }
 
     // MARK: - 指令执行
@@ -568,6 +615,23 @@ final class PetDelegate: NSObject, NSApplicationDelegate {
             case "quit":
                 results.append("拜拜～")
                 NSApp.terminate(nil)
+            case "openurl":
+                // 「在谷歌打开 xx 网站」→ 模型只能空口答应，因为白名单里没有这个能力。
+                // 现在补上：用指定浏览器（或默认浏览器）打开任意网址。
+                let rest = a.arg
+                var url = rest, browser: String? = nil
+                if let i = rest.firstIndex(of: "|") {
+                    browser = String(rest[i...].dropFirst().trimmingCharacters(in: .whitespaces))
+                    url = String(rest[..<i]).trimmingCharacters(in: .whitespaces)
+                }
+                results.append(MacActions.openURL(url, browser: browser))
+            case "search":
+                // 「在谷歌搜索 xx」的兜底，避免模型不知道该发什么标记
+                results.append(MacActions.googleSearch(a.arg))
+            case "shell":
+                // 分身权限：执行常用 shell 命令（ls/echo/python3/curl/git/nas-run.sh…）。
+                // 黑名单已拦掉 rm -rf /、sudo、kill、launchctl、chmod 777 等。
+                results.append(MacActions.runShell(a.arg))
             default:
                 break
             }
