@@ -156,7 +156,32 @@ enum SpriteLoader {
         }
     }
 
-    static func load(dir: String, log: (String) -> Void) -> SpriteSet {
+    /// 素材按显示分辨率解码（不按原始 385x310 解）。
+    /// footprint 实测 36MB 里 16MB 是 Image IO —— 40 帧原始尺寸 PNG 的解码缓冲。
+    /// 桌宠实际只按 ~152x122pt 显示（Retina 上 304x244px），
+    /// 用 CGImageSource 直接出缩略图，解完即释放原图，常驻能砍掉一半。
+    /// maxPixel 传 0 = 按原始尺寸解码（旧行为）。
+    /// 解一张 PNG。maxPixel>0 时直接出该尺寸的缩略图（顺带释放原始解码缓冲）。
+    private static func decode(_ path: String, maxPixel: Int) -> CGImage? {
+        if maxPixel > 0 {
+            let url = URL(fileURLWithPath: path) as CFURL
+            if let src = CGImageSourceCreateWithURL(url, nil) {
+                let opts: [CFString: Any] = [
+                    kCGImageSourceCreateThumbnailFromImageAlways: true,
+                    kCGImageSourceThumbnailMaxPixelSize: maxPixel,
+                    kCGImageSourceCreateThumbnailWithTransform: true,
+                    kCGImageSourceShouldCacheImmediately: true,
+                ]
+                if let t = CGImageSourceCreateThumbnailAtIndex(src, 0, opts as CFDictionary) {
+                    return t
+                }
+            }
+        }
+        guard let img = NSImage(contentsOfFile: path) else { return nil }
+        return img.cgImage(forProposedRect: nil, context: nil, hints: nil)
+    }
+
+    static func load(dir: String, maxPixel: Int = 0, log: (String) -> Void) -> SpriteSet {
         let fm = FileManager.default
         guard let all = try? fm.contentsOfDirectory(atPath: dir) else {
             log("[MikuPet] 素材目录不存在: \(dir)")
@@ -174,8 +199,7 @@ enum SpriteLoader {
         var foot: CGFloat = 0
         var head: CGFloat = 1
         for (fam, _, path) in found {
-            guard let img = NSImage(contentsOfFile: path),
-                  let cg = img.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+            guard let cg = decode(path, maxPixel: maxPixel) else {
                 skipped.append((path as NSString).lastPathComponent); continue
             }
             let b = box(of: cg, solid: false)

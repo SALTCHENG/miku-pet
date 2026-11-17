@@ -120,7 +120,9 @@ final class PetDelegate: NSObject, NSApplicationDelegate {
         // 素材：优先 bundle 内，回落工作区目录
         let dir = PetDelegate.spriteDir()
         PetView.debugAssetDir = dir
-        let set = SpriteLoader.load(dir: dir, log: { print($0) })
+        // 素材按显示分辨率解码：窗口高 h pt × Retina 比例 × 宽高比 → 像素上限
+        let px = Int((h * (NSScreen.main?.backingScaleFactor ?? 2.0) * 1.35).rounded())
+        let set = SpriteLoader.load(dir: dir, maxPixel: px, log: { print($0) })
         if set.isEmpty {
             print("[MikuPet] FATAL: 没找到任何素材 PNG（目录 \(dir)）")
         }
