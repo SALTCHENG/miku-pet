@@ -565,10 +565,13 @@ final class PetDelegate: NSObject, NSApplicationDelegate {
             || low == "ls" || low == "列出当前目录" || low == "列出文件" {
             return MacActions.runShell("ls -la")
         }
-        // 换装：用户说「换成金发」「戴个帽子」就直接换
-        if low.contains("换装") || low.contains("换发型") || low.contains("换衣服")
-            || low.contains("戴帽子") || low.contains("戴耳机") || low.contains("戴蝴蝶结")
-            || low.contains("今天造型") || low.contains("换个造型") {
+        // 换装：用户说「换成金发」「戴个帽子」「今天造型」就直接换
+        // 也支持直接 costume 名称（「金发歌姬」「紫发魔法」）和颜色词
+        let costumeKeywords = ["换装", "换发型", "换衣服", "戴帽子", "戴耳机", "戴蝴蝶结",
+                               "今天造型", "换个造型", " costume", "costume",
+                               "青发", "樱粉", "金发", "银白", "紫发", "彩虹", "蓝白", "黑长直",
+                               "蝴蝶结", "耳机", "缎带", "礼帽", "皇冠", "发卡"]
+        if costumeKeywords.contains(where: { low.contains($0) }) {
             if let c = Costume.find(t) {
                 petView.setCostume(hue: c.hue, accessory: c.accessory)
                 return "已经换成「" + c.name + "」啦～"
